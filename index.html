@@ -1,0 +1,215 @@
+<!-- File: index.html (single file full version) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Online Chess Game</title>
+  <style>
+    body { display: flex; flex-direction: column; align-items: center; background: #fafafa; font-family: sans-serif; }
+    #info { display: flex; flex-direction: column; align-items: center; width: 500px; margin-bottom: 10px; font-size: 20px; }
+    #board { display: grid; grid-template-columns: repeat(8, 60px); grid-template-rows: repeat(8, 60px); margin-bottom: 20px; }
+    .square { width: 60px; height: 60px; display: flex; justify-content: center; align-items: center; font-size: 36px; cursor: pointer; }
+    .white { background-color: #eee; }
+    .black { background-color: #555; }
+    .selected { outline: 2px solid red; }
+    #chat { width: 500px; display: flex; flex-direction: column; }
+    #messages { height: 150px; overflow-y: auto; background: #fff; border: 1px solid #ccc; margin-bottom: 10px; padding: 5px; }
+    #chatInput { padding: 10px; font-size: 16px; }
+    #sendBtn, #restartBtn { padding: 10px; font-size: 16px; margin-top: 5px; }
+    #restartBtn { margin-bottom: 20px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>Online Chess</h1>
+  <div id="info">
+    <div id="playerNames">Waiting for players...</div>
+    <div id="turnDisplay">Turn: </div>
+    <div id="timer">Timer: 60</div>
+  </div>
+  <div id="board"></div>
+  <button id="restartBtn">Restart Game</button>
+  <div id="chat">
+    <div id="messages"></div>
+    <input id="chatInput" type="text" placeholder="Type a message...">
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const board = document.getElementById('board');
+    const turnDisplay = document.getElementById('turnDisplay');
+    const timerDisplay = document.getElementById('timer');
+    const messages = document.getElementById('messages');
+    const chatInput = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const playerNames = document.getElementById('playerNames');
+    const restartBtn = document.getElementById('restartBtn');
+
+    let selectedSquare = null;
+    let pieces = {};
+    let myColor = null;
+    let currentTurn = 'white';
+    let timer = 60;
+    let timerInterval;
+    let myName = prompt('Enter your name:');
+
+    const initialSetup = {
+      0: ['♜', '♞', '♝', '♛', '♚', '♝', '♞', '♜'],
+      1: Array(8).fill('♟'),
+      6: Array(8).fill('♙'),
+      7: ['♖', '♘', '♗', '♕', '♔', '♗', '♘', '♖']
+    };
+
+    socket.emit('name', myName);
+
+    function createBoard() {
+      board.innerHTML = '';
+      pieces = {};
+      for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+          const square = document.createElement('div');
+          square.className = `square ${(row + col) % 2 === 0 ? 'white' : 'black'}`;
+          square.dataset.row = row;
+          square.dataset.col = col;
+          square.addEventListener('click', handleSquareClick);
+          board.appendChild(square);
+          if (initialSetup[row]) {
+            square.textContent = initialSetup[row][col];
+            pieces[`${row}-${col}`] = initialSetup[row][col];
+          }
+        }
+      }
+    }
+
+    function handleSquareClick(e) {
+      const square = e.currentTarget;
+      const row = square.dataset.row;
+      const col = square.dataset.col;
+      const key = `${row}-${col}`;
+      if (selectedSquare) {
+        attemptMove(selectedSquare.dataset.row, selectedSquare.dataset.col, row, col);
+        selectedSquare.classList.remove('selected');
+        selectedSquare = null;
+      } else if (pieces[key] && isMyPiece(pieces[key])) {
+        selectedSquare = square;
+        square.classList.add('selected');
+      }
+    }
+
+    function attemptMove(fromRow, fromCol, toRow, toCol) {
+      if (!isMyTurn()) return;
+      if (!isLegalMove(fromRow, fromCol, toRow, toCol)) {
+        alert('Illegal move'); return;
+      }
+      movePiece(fromRow, fromCol, toRow, toCol);
+      socket.emit('move', { fromRow, fromCol, toRow, toCol });
+    }
+
+    function movePiece(fromRow, fromCol, toRow, toCol) {
+      const fromKey = `${fromRow}-${fromCol}`;
+      const toKey = `${toRow}-${toCol}`;
+      document.querySelector(`[data-row='${fromRow}'][data-col='${fromCol}']`).textContent = '';
+      document.querySelector(`[data-row='${toRow}'][data-col='${toCol}']`).textContent = pieces[fromKey];
+      pieces[toKey] = pieces[fromKey];
+      delete pieces[fromKey];
+      checkCheck();
+    }
+
+    function isMyPiece(piece) {
+      if (!myColor) return true;
+      return (myColor === 'white' && piece.charCodeAt(0) <= 9817) || (myColor === 'black' && piece.charCodeAt(0) >= 9818);
+    }
+
+    function isMyTurn() { return myColor === currentTurn; }
+
+    function isLegalMove(fromRow, fromCol, toRow, toCol) {
+      const piece = pieces[`${fromRow}-${fromCol}`];
+      if (!piece) return false;
+      const dRow = toRow - fromRow;
+      const dCol = toCol - fromCol;
+      const destKey = `${toRow}-${toCol}`;
+      switch (piece) {
+        case '♙':
+          if (dCol === 0 && dRow === -1 && !pieces[destKey]) return true;
+          if (fromRow == 6 && dCol === 0 && dRow === -2 && !pieces[destKey]) return true;
+          if (Math.abs(dCol) === 1 && dRow === -1 && pieces[destKey]) return true;
+          return false;
+        case '♟':
+          if (dCol === 0 && dRow === 1 && !pieces[destKey]) return true;
+          if (fromRow == 1 && dCol === 0 && dRow === 2 && !pieces[destKey]) return true;
+          if (Math.abs(dCol) === 1 && dRow === 1 && pieces[destKey]) return true;
+          return false;
+        case '♖': case '♜': return dRow === 0 || dCol === 0;
+        case '♗': case '♝': return Math.abs(dRow) === Math.abs(dCol);
+        case '♘': case '♞': return (Math.abs(dRow) === 2 && Math.abs(dCol) === 1) || (Math.abs(dRow) === 1 && Math.abs(dCol) === 2);
+        case '♕': case '♛': return dRow === 0 || dCol === 0 || Math.abs(dRow) === Math.abs(dCol);
+        case '♔': case '♚': return Math.abs(dRow) <= 1 && Math.abs(dCol) <= 1;
+        default: return false;
+      }
+    }
+
+    function startTimer() {
+      clearInterval(timerInterval);
+      timer = 60;
+      timerInterval = setInterval(() => {
+        timerDisplay.textContent = `Timer: ${timer--}`;
+        if (timer < 0) {
+          clearInterval(timerInterval);
+          socket.emit('timeout');
+        }
+      }, 1000);
+    }
+
+    function checkCheck() {
+      const king = Object.entries(pieces).find(([k, v]) => v === (currentTurn === 'white' ? '♚' : '♔'));
+      if (!king) {
+        alert(`${currentTurn === 'white' ? 'Black' : 'White'} wins by checkmate!`);
+        restartBtn.style.display = 'block';
+      }
+    }
+
+    sendBtn.addEventListener('click', () => {
+      const msg = `${myName}: ${chatInput.value}`;
+      if (chatInput.value.trim()) {
+        socket.emit('chat', msg);
+        chatInput.value = '';
+      }
+    });
+
+    restartBtn.addEventListener('click', () => { socket.emit('restart'); });
+
+    socket.on('restart', () => {
+      restartBtn.style.display = 'none';
+      createBoard();
+    });
+
+    socket.on('move', ({ fromRow, fromCol, toRow, toCol, currentTurn: turn }) => {
+      movePiece(fromRow, fromCol, toRow, toCol);
+      currentTurn = turn;
+      turnDisplay.textContent = `Turn: ${currentTurn}`;
+      if (isMyTurn()) startTimer();
+    });
+
+    socket.on('turn', (turn) => {
+      currentTurn = turn;
+      turnDisplay.textContent = `Turn: ${currentTurn}`;
+      if (isMyTurn()) startTimer();
+    });
+
+    socket.on('chat', (msg) => {
+      const p = document.createElement('p');
+      p.textContent = msg;
+      messages.appendChild(p);
+      messages.scrollTop = messages.scrollHeight;
+    });
+
+    socket.on('name', (name) => {
+      playerNames.textContent += ` | ${name}`;
+    });
+
+    createBoard();
+  </script>
+</body>
+</html>
